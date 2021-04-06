@@ -1,0 +1,1507 @@
+---
+title: "ACS and Google Trends (2010-2019) Cross-Sectional Data"
+author: "Yu-Hsuan Liu"
+date: "March 2nd, 2021"
+output:
+  pdf_document:
+    keep_tex: yes
+  word_document: default
+header-includes:
+- \usepackage{pdflscape}
+- \usepackage{caption}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+---
+```{r}
+devtools::install_github("jacekpardyak/resume")
+```
+
+
+```{r, results='hide',message=FALSE,warning = FALSE}
+library(dplyr)
+library(xtable)
+library(prettyR)
+library(ggplot2)
+library(tidyr)
+library(glue)
+library(gtable)
+library(grid)
+library(gridExtra)
+library(stargazer)
+library(haven)
+library(reshape2)
+library(MatchIt)
+library(maps)
+library(plm)
+library(multiwayvcov)
+library(lmtest)
+library(readxl)
+library(janitor)
+library(hablar)
+library(psych)
+library(psycho)
+library(tidyverse)
+library(reshape2)
+library(geojsonio)
+library(geojsonsf)
+library(sp)
+library(RColorBrewer)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(broom)
+library(mapproj)
+library(ggpubr)
+library(viridis)
+library(pastecs)
+library(kableExtra)
+library(knitr)
+library(MASS)
+
+
+
+eval = TRUE
+options(scipen = 999)
+options(xtable.comment = FALSE)
+knitr::opts_chunk$set(cache = TRUE)
+theme_set(theme_bw())
+```
+
+
+
+
+
+```{r, results = "asis"}
+## We dont use 2005-2009 data because there is no internet and vehicle data!
+
+# read ACS 2005-2009
+acs_05_09 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2005_2009.csv")
+
+# read ACS 2006-2010
+acs_06_10 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2006_2010.csv")
+
+# read ACS 2007-2011
+acs_07_11 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2007_2011.csv")
+
+# read ACS 2008-2012
+acs_08_12 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2008_2012.csv")
+
+# read ACS 2009-2013
+acs_09_13 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2009_2013.csv")
+
+# read ACS 2010-2014
+acs_10_14 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2010_2014.csv")
+
+# read ACS 2011-2015
+acs_11_15 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2011_2015.csv")
+
+# read ACS 2012-2016
+acs_12_16 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2012_2016.csv")
+
+# read ACS 2013-2017
+acs_13_17 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2013_2017.csv")
+
+# read ACS 2014-2018
+acs_14_18 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2014_2018.csv")
+
+# read ACS 2015-2019
+acs_15_19 <- read.csv("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/ACS_2015_2019.csv")
+```
+
+\newpage
+\blandscape
+```{r, results = "asis"}
+# read needed ACS variables lists and IDs
+acs_variables_id <- read_excel("C:/Users/tosea/Google-Trend/datasets/ACS(5 year estimates)/Variable Lists and IDs.xlsx")
+print(xtable(acs_variables_id), scalebox = 0.8)
+```
+\elandscape
+\newpage
+
+```{r}
+
+#Read walkcross file (county to dmas)
+walkcross <- read.csv("county_dma_crosswalk_harvard.csv")
+
+#process cross-sectional data 2010-2019
+pre_process_ACS <- function(data, walkcross, variable_id, year){
+  #To make ID as column names
+  data <- data %>%
+    row_to_names(row_number = 1)
+  
+  #Keep needed variables
+  data <- data[,c(variable_id["ACS ID"])[[1]]]
+  data <- data %>% 
+    rename(
+      FIPS = Geo_FIPS,
+      )
+  #Make string to numberic
+  data <- data %>% retype()
+  
+  #Aggregate county level data into DMAs
+  
+    ## Merge ACS with walkcross
+  data_new <- merge(data, walkcross,by="FIPS")
+  
+    ## Drop columns not needed
+  data_new = subset(data_new, select = -c(FIPS, STATE, COUNTY,  Harvard_DMA))
+  
+    ## Group_by DMAs
+  data_DMA <- data_new %>% 
+    group_by(DMA) %>% 
+    summarise_each(funs(sum))
+
+  return(data_DMA)
+  }
+
+pre_acs_15_19 <- pre_process_ACS(acs_15_19, walkcross, acs_variables_id, "2019")
+pre_acs_10_14 <- pre_process_ACS(acs_10_14, walkcross, acs_variables_id, "2014")
+
+#add numeric variables
+acs_10_19 <- (pre_acs_15_19[2:25] + pre_acs_10_14[2:25])/2
+
+#add DMA and ID
+acs_10_19["DMA"] <- pre_acs_15_19$DMA
+acs_10_19["DMAINDEX"] <- pre_acs_15_19$DMAINDEX
+```
+
+
+
+```{r}
+#Write a function to process acs_10_19 (combining and calculating "rates")
+post_process_ACS <- function(data_DMA, year){
+  data_DMA["Percentage of Foreign Born"] <- data_DMA$SE_A06001_003/data_DMA$SE_A00001_001
+  
+    ## Percentage of MoveIn: (Moved)/Total Pop. Use function scale to standardize data 
+    ## as the data of mean == 0, sd == 1
+  data_DMA["Percentage of MoveIn"] <- 
+    (data_DMA$SE_A08001_003 +
+       data_DMA$SE_A08001_004 +
+       data_DMA$SE_A08001_005 +
+       data_DMA$SE_A08001_006 )/
+       data_DMA$SE_A00001_001
+   ## Alpha Test of Percentage of MoveIn
+  print(alpha(data.frame("Move Within Same County" = data_DMA$SE_A08001_003,
+                   "Move from different county within same state" = data_DMA$SE_A08001_004,
+                   "Move from different state" = data_DMA$SE_A08001_005,
+                   "Move from abroad" = data_DMA$SE_A08001_006)))
+  
+   ## Percentage of Renter
+  data_DMA["Percentage of Renter"] <- data_DMA$SE_A10062B_001/data_DMA$SE_A00001_001
+  
+  
+  ## Mobility Index
+  ## Move In + Renter
+  data_DMA["Mobility Index"] <- 
+    #standardized percentage of renter
+    scale(data_DMA$SE_A10062B_001/data_DMA$SE_A00001_001) +
+    #standardized percentage of movein
+    scale((data_DMA$SE_A08001_003 +
+       data_DMA$SE_A08001_004 +
+       data_DMA$SE_A08001_005 +
+       data_DMA$SE_A08001_006 )/
+       data_DMA$SE_A00001_001)
+  
+  ## Alpha Test
+  print(alpha(data.frame("Percentage of MoveIn" = scale(data_DMA["Percentage of MoveIn"]),
+                   "Percentage of Renter" = scale(data_DMA["Percentage of Renter"]))))
+  
+   ## Concentrated Disadvantages Index 
+   ##(Unemployed + Female-headed Family + Poverty Family + Less than High School)
+   ## (Using "scale" func to standardize)
+  data_DMA["Concentrated Disadvantaged Index"] <- 
+    scale(data_DMA$SE_A17002_006/data_DMA$SE_A00001_001) +
+    scale(data_DMA$SE_A10009_007/data_DMA$SE_A10008_001) +
+    scale(data_DMA$SE_A13002_002/data_DMA$SE_A10008_001) +
+    scale(data_DMA$SE_A12001_002/data_DMA$SE_A00001_001)
+  
+  data_DMA["Percentage of Unemployed"] <- 
+  data_DMA$SE_A17002_006/data_DMA$SE_A00001_001
+  
+  data_DMA["Percentage of Female Headed Family"] <- 
+  data_DMA$SE_A10009_007/data_DMA$SE_A10008_001
+    
+  data_DMA["Percentage of Poverty"] <- 
+  data_DMA$SE_A13002_002/data_DMA$SE_A10008_001
+  
+   ## Alpha Test of Concentrated Disadvantages Index 
+  print(alpha(data.frame("Unemployed" = scale(data_DMA$SE_A17002_006/data_DMA$SE_A00001_001),
+                   "Female Headed Family" = scale(data_DMA$SE_A10009_007/data_DMA$SE_A10008_001),
+                   "Family Income Below Poverty" = scale(data_DMA$SE_A13002_00/data_DMA$SE_A10008_001),
+                   "Less than High School" = scale(data_DMA$SE_A12001_002/data_DMA$SE_A00001_001))))
+  
+   ## Heterogeneity Index (The Probability that two persons are in different race)
+   ## = 1 - (The probability that two persons are in the same race)
+  data_DMA["Heterogeneity Index"] <-
+    1 - (
+      #percentage of Non-Hispanic White ^2
+      (data_DMA$SE_A04001_003/data_DMA$SE_A00001_001)^2 + 
+        #percentage of Hispanic or Latino ^2
+        (data_DMA$SE_A04001_010/data_DMA$SE_A00001_001)^2 +
+        #percentage of Non-Hispanic Native and Indian ^2
+        (data_DMA$SE_A04001_005/data_DMA$SE_A00001_001)^2 +
+        #percentage of Non-Hispanic Asian ^2
+        (data_DMA$SE_A04001_006/data_DMA$SE_A00001_001)^2 +
+        #percentage of Non-Hispanic Pacific Islander ^2
+        (data_DMA$SE_A04001_007/data_DMA$SE_A00001_001)^2 +
+        #percentage of Non-Hispanic Black ^2
+        (data_DMA$SE_A04001_004/data_DMA$SE_A00001_001)^2
+    )
+  
+  #Percentage of Young Males
+    data_DMA["Percentage of Young Males"] <- 
+    (data_DMA$SE_A02002_006 +
+       data_DMA$SE_A02002_006 +
+       data_DMA$SE_A02002_006
+     )/data_DMA$SE_A00001_001
+  
+  #Percentage of Dropp Out
+  data_DMA["Percentage of Dropped Out"] <- data_DMA$SE_A12003_002/data_DMA$SE_A12003_001
+  
+  #Percentage of Divorced
+  data_DMA["Percentage of Divorced"] <- data_DMA$SE_A11001_006/data_DMA$SE_A00001_001
+  
+  #log population
+  data_DMA["Popualtion(logged)"] <- log(data_DMA$SE_A00001_001)
+  
+  #insert year value
+  data_DMA$year = year
+  
+  #Percentage of Less Than High School (Population 25 Years and Over: Less than High School)
+  data_DMA["Less than High School"] <- data_DMA$SE_A12001_002/data_DMA$SE_A00001_001
+  
+  #Percentage of Non-Hispanic White
+  data_DMA["Percentage of White"] <- data_DMA$SE_A04001_003/data_DMA$SE_A00001_001
+  
+  #Percentage of Non-Hispanic Black
+  data_DMA["Percentage of Black"] <- data_DMA$SE_A04001_004/data_DMA$SE_A00001_001
+  
+  #Percentage of Hispanic
+  data_DMA["Percentage of Hispanic"] <- data_DMA$SE_A04001_010/data_DMA$SE_A00001_001
+  
+  return(data_DMA[c("DMA",
+                    "DMAINDEX",
+                    "year",
+                    "Percentage of Foreign Born",
+                    "Percentage of MoveIn",
+                    "Percentage of Renter",
+                    "Mobility Index",
+                    "Concentrated Disadvantaged Index",
+                    "Percentage of Unemployed",
+                    "Percentage of Female Headed Family",
+                    "Percentage of Poverty",
+                    "Heterogeneity Index",
+                    "Percentage of Young Males",
+                    "Percentage of Dropped Out",
+                    "Percentage of Divorced",
+                    "Popualtion(logged)",
+                    "Less than High School",
+                    "Percentage of White",
+                    "Percentage of Black",
+                    "Percentage of Hispanic",
+                    "SE_A00001_001")])
+}
+acs_10_19_dma <- post_process_ACS(acs_10_19, "2010-2019")
+```
+
+```{r}
+# Processing UCR Crime 
+ucr <- read.csv("C://Users//tosea//Google-Trend//datasets//UCR_Crime_ICPSR//ucr_offenses_known_yearly_1960_2019_csv//offenses_known_yearly_1960_2019.csv")
+
+#write a function to process UCR data
+ucr_func <- function(ucr, year1, year2){
+  #filter needed year range
+  ucr_year <- ucr[(ucr$year >= year1) & (ucr$year <= year2), ]
+  #keep needed variables
+  ucr_year <- ucr_year[c("fips_state_county_code", 
+                                 "population", 
+                                 "actual_rape_total",
+                                 "actual_burg_total",
+                                 "actual_theft_total",
+                                 "actual_mtr_veh_theft_total")]
+  
+  #aggregate single years to a period needed
+  ucr_year_fips <- ucr_year %>% 
+      group_by(fips_state_county_code) %>% 
+      summarise_each(funs(sum))
+  
+  #rename FIPS
+  ucr_year_fips <- ucr_year_fips%>% 
+      rename(
+        FIPS = fips_state_county_code,
+        )
+  
+  #merge with walkcross, prepare to group_by DMAs
+  ucr_year_fips <- merge(ucr_year_fips, walkcross,by="FIPS")
+  
+  #Drop unneeded variables
+  ucr_year_fips <- subset(ucr_year_fips,
+                              select = -c(FIPS, STATE, COUNTY, DMAINDEX, Harvard_DMA))
+  
+  ## Group_by DMAs
+  ucr_year_DMA <- ucr_year_fips %>% 
+      group_by(DMA) %>% 
+      summarise_each(funs(sum))
+  
+  #crime rate
+  ucr_year_DMA_rate <- ucr_year_DMA[-1]/ucr_year_DMA$population
+  
+  
+  #add DMA back to the data
+  ucr_year_DMA_rate["DMA"] <- ucr_year_DMA$DMA
+  
+  #rename
+  colnames(ucr_year_DMA_rate) <- c("POP", "UCR Rape", "UCR Burglary",
+                                   "UCR Larceny", "UCR MVT", "DMA")
+
+  return(ucr_year_DMA_rate)
+}
+
+ucr_2010_2019 <- ucr_func(ucr, 2010, 2019)[,-c(1)]
+
+```
+
+
+
+```{r,message=FALSE,warning = FALSE}
+#Read Google Trends data
+
+
+gt_10_19 <- read.csv("10-19_gt_crime/GT_Crime_SingleKeywordsOrigin.csv")
+
+
+gt_10_19 <- gt_10_19[c("dma_area",
+           "MVT_10_19",
+           "Burglary_10_19",
+           "Larceny_10_19",
+           "Rape_10_19")
+           ] %>% rename(
+             DMA = dma_area,
+             )
+```
+
+
+```{r}
+#control variables (Internet Usage and Median Vehicles per Family)
+cv = read.csv("sima.csv")
+
+#FIPS to DMAs
+cv <- merge(cv, walkcross,by="FIPS")
+
+#drop unneeded columns
+cv <- subset(cv, select = -c(FIPS, STATE, COUNTY, DMAINDEX, Harvard_DMA))
+
+# group by DMAs (in Stata it is collapese(sum))
+cv_dma <- cv %>% 
+    group_by(DMA) %>% 
+    summarise_each(funs(sum))
+
+# for median Vehicle, we need to use average (in Stata it is collapese(mean))
+cv_dma_mean <- cv %>% 
+    group_by(DMA) %>% 
+    summarise_each(funs(mean))
+
+
+############################################
+#use cv year 2010-2019 for data 2010-2019
+cv_dma["Internet Usage HH 10_19"] <- 
+  ((cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2011 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2012 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2013 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2014 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2015 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2016 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2017 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2018 +
+     cv_dma$X..Households.Using...Internet..Any.Internet.Online.usage..2019
+   )/9)/
+  ((cv_dma$X..Households..HHs...2011 + 
+      cv_dma$X..Households..HHs...2012 +
+      cv_dma$X..Households..HHs...2013 +
+      cv_dma$X..Households..HHs...2014 +
+      cv_dma$X..Households..HHs...2015 + 
+      cv_dma$X..Households..HHs...2016 +
+      cv_dma$X..Households..HHs...2017 +
+      cv_dma$X..Households..HHs...2018 +
+      cv_dma$X..Households..HHs...2019)/9)
+
+
+cv_dma["Median Vehicle HH 10_19"] <- 
+  (cv_dma_mean$Household..Median.Vehicles..2011 + 
+     cv_dma_mean$Household..Median.Vehicles..2012 + 
+     cv_dma_mean$Household..Median.Vehicles..2013 + 
+     cv_dma_mean$Household..Median.Vehicles..2014 +
+     cv_dma_mean$Household..Median.Vehicles..2015 + 
+     cv_dma_mean$Household..Median.Vehicles..2016 + 
+     cv_dma_mean$Household..Median.Vehicles..2017 + 
+     cv_dma_mean$Household..Median.Vehicles..2018 +
+     cv_dma_mean$Household..Median.Vehicles..2019
+   )/9
+
+
+cv_dma_10_19 <- cv_dma[c("DMA", 
+                   "Internet Usage HH 10_19",
+                   "Median Vehicle HH 10_19")]
+
+```
+
+```{r}
+# Add Drug Mobility 2010-2018 into the Cross Sectional Data
+
+drug_sup <- read.csv("datasets/substance_abuse_data_12_16/NCHS_Drug_Poisoning_Mortality_by_County__United_States.csv")
+
+#filter years which are larger than and equal to 2010
+drug_sup <- drug_sup %>%
+  subset(drug_sup$Year >= 2010)
+
+#average counts of all years
+drug_sup_fips <- drug_sup[c(1,5)] %>%
+  group_by(FIPS) %>%
+  summarize_each(mean)
+
+#rename 
+colnames(drug_sup_fips) <- c("FIPS", "Drug_Mortality_Count_10_18")
+
+#from county to DMA
+drug_sup_dma <- drug_sup_fips %>% 
+  merge(walkcross, by = "FIPS")
+
+drug_sup_dma_10_18 <- drug_sup_dma[c("DMA", "Drug_Mortality_Count_10_18")] %>%
+  group_by(DMA) %>%
+  summarize_each(sum)
+drug_temp <- merge(acs_10_19_dma, drug_sup_dma_10_18, by = "DMA")
+
+#calculate the mortality rate
+drug_temp$Drug.Mortality.Rate <- 
+  drug_temp$Drug_Mortality_Count_10_18/drug_temp$SE_A00001_001*1000000
+
+drug_mortality_rate_10_18 <- drug_temp[c("DMA", "Drug.Mortality.Rate")]
+
+```
+
+
+```{r}
+#law enforcement employments
+law_enforce_10_14 <- retype(read.csv("datasets/police_2010_2019/law enforcement employments 10-14.csv")[c(2, 4)])
+law_enforce_15_19 <- retype(read.csv("datasets/police_2010_2019/law enforcement employments 15-19.csv")[c(2, 4)])
+
+colnames(law_enforce_10_14) <- c("FIPS", "law_enforcement_employments_10_14")
+colnames(law_enforce_15_19) <- c("FIPS", "law_enforcement_employments_15_19")
+
+law_enforce_10_19 <- merge(law_enforce_10_14, law_enforce_15_19, by = "FIPS")
+
+law_enforce_10_19["law_enforcement_employments_10_19"] <- 
+  (law_enforce_10_19["law_enforcement_employments_10_14"]+
+  law_enforce_10_19["law_enforcement_employments_15_19"])/2
+law_enforce_10_19_dma <- merge(
+  law_enforce_10_19, walkcross, by = "FIPS")
+
+
+
+law_enforce_10_19_dma <- law_enforce_10_19_dma %>%
+  dplyr::select("DMA", "law_enforcement_employments_10_19") %>%
+  group_by(DMA) %>%
+  summarize_each(sum) %>%
+  merge(acs_10_19_dma[c("DMA", "SE_A00001_001")], by = "DMA")
+
+law_enforce_10_19_dma_per_thousand <- law_enforce_10_19_dma %>%
+  mutate(law_enforcement_employments_10_19_per_thousand = 
+           law_enforcement_employments_10_19/SE_A00001_001*1000) %>%
+  dplyr::select("DMA", "law_enforcement_employments_10_19_per_thousand")
+
+
+```
+
+
+```{r}
+
+total_10_19 <- 
+  merge(
+    merge(
+      merge(
+        merge(
+          merge(
+            gt_10_19, ucr_2010_2019, by = "DMA"), 
+          acs_10_19_dma,by = "DMA"), 
+        drug_mortality_rate_10_18, by = "DMA"),
+      law_enforce_10_19_dma_per_thousand, by = "DMA"),
+    cv_dma_10_19, by = "DMA")
+
+
+
+
+rename_list <- c("DMA", 
+                "GT.MVT", 
+                "GT.Burglary", 
+                "GT.Larceny", 
+                "GT.Rape", 
+                "UCR.Rape",
+                "UCR.Burglary",
+                "UCR.Larceny",
+                "UCR.MVT",
+                "DMA.INDEX", 
+                "year", 
+                "Percentage.of.Foreign.Born",
+                "Percentage.of.MoveIn",
+                "Percentage.of.Renter",
+                "Mobility.Index",
+                "Concentrated.Disadvantage.Index",
+                "Percentage.of.Unemployed",
+                "Percentage.of.Female.Headed.Family",
+                "Percentage.of.Poverty",
+                "Heterogeneity.Index",
+                "Percentage.of.Young.Males",
+                "Percentage.of.Dropped.Out",
+                "Percentage.of.Divorced",
+                "Population.logged",
+                "Less.than.High.School",
+                "Percentage.of.White",
+                "Percentage.of.Black",
+                "Percentage.of.Hispanic",
+                "Population",
+                "Drug.Mortality.Rate",
+                "Law.Enforce.per.Thousand",
+                "Internet.Usage.HH",
+                "Median.Vehicle.HH")
+
+colnames(total_10_19) <- rename_list
+
+
+```
+
+```{r,message=FALSE,warning = FALSE}
+#get the 2010-2019 cross sectional data and drop na
+final.data.2010_2019 <- total_10_19 %>%
+  subset(select = -c(year)) %>%
+  drop_na()
+final.data.2010_2019$GT.Rape
+
+#rescale GT and UCR crime rates into 0-100 after dropping NA
+dependent_variable_col_names <- c("GT.MVT", "GT.Burglary", "GT.Larceny", "GT.Rape",
+                                  "UCR.MVT", "UCR.Burglary", "UCR.Larceny", "UCR.Rape")
+
+for (i in dependent_variable_col_names){
+    final.data.2010_2019[[i]] <- final.data.2010_2019[[i]]/max(final.data.2010_2019[[i]])*100
+  }
+
+
+operated_data_and_variables <- final.data.2010_2019[,c("GT.MVT","GT.Burglary","GT.Larceny", "GT.Rape",
+                                    "UCR.MVT","UCR.Burglary","UCR.Larceny", "UCR.Rape",
+                                    "Concentrated.Disadvantage.Index",
+                                    #"Percentage.of.Unemployed",
+                                    #"Percentage.of.Female.Headed.Family",
+                                    #"Percentage.of.Poverty",
+                                    #"Percentage.of.MoveIn",
+                                    #"Percentage.of.Renter",
+                                    "Mobility.Index",
+                                    "Heterogeneity.Index",
+                                    "Percentage.of.Foreign.Born", 
+                                    #"Percentage.of.Black",
+                                    #"Percentage.of.Hispanic", 
+                                    #"Percentage.of.White",
+                                    "Percentage.of.Divorced",
+                                    #"Less.than.High.School",
+                                    "Percentage.of.Young.Males",
+                                    "Drug.Mortality.Rate",
+                                    #"Law.Enforce.per.Thousand",
+                                    "Population.logged",
+                                    "Internet.Usage.HH",
+                                    "Median.Vehicle.HH")]
+desc_10_19 <- round(t(stat.desc(operated_data_and_variables))[,c("mean", "std.dev", "max", "min")], 2)
+
+desc_table <- cbind.data.frame(desc_10_19)
+colnames(desc_table) <- c("Mean", "SD", "Max", "Min") 
+list_of_row_names <- c("GT Motor Vehicle Theft", "GT Burglary", "GT Larceny", "GT Rape",
+                          "UCR Motor Vehivle Theft", "UCR Burglary", "UCR Larceny", "UCR Rape",
+                          "Concentrated Disadvantages Index", 
+                          #"% Unemployed",
+                          #"% Female Headed Family",
+                          #"% Poverty",
+                          #"% Move In", 
+                          #"% Renter",
+                          "Mobility Index",
+                          "Heterogeneity Index",
+                          "% Foreign Born", 
+                          #"% Black", 
+                          #"% Hispanic", 
+                          #"% White", 
+                          "% Divorced", 
+                          #"% Less than High School", 
+                          "% Young Males",
+                          "Drug Mortality Rate",
+                          #"Law Enforce per Thousand",
+                          "Population(log)",
+                          "% Internet Usage HH",
+                          "Median Vehicle HH")
+
+rownames(desc_table) <- list_of_row_names
+
+```
+
+\newpage
+\blandscape
+\captionsetup{width=20cm}
+```{r, results = "asis", message=FALSE, warning = FALSE, echo = FALSE}
+final_desc_table <- kable(desc_table, longtable = T, booktabs = T, align = "c", format = "latex",
+    caption = "Descriptive Statistics for 2010 to 2019", digits = 3) %>%
+
+  kable_styling(position = "center", 
+                latex_options = c("hold_position")) %>%
+  pack_rows("Crime Rates (Outcome Variables)", 1, 8) %>%
+  pack_rows("Predictor Variables", 9, 15) %>%
+  pack_rows("Control Variables", 16, 18) %>%
+  column_spec(1, bold = F, width = "6cm") %>%
+  column_spec(2, bold = F, width = "1cm") %>%
+  column_spec(3, bold = F, width = "1cm") %>%
+  column_spec(4, bold = F, width = "1cm") %>%
+  column_spec(5, bold = F, width = "1cm") %>%
+  footnote(number = c(paste("N = ", length(final.data.2010_2019$DMA), " DMAs."), "GT = Google Trends Crime Estimates.", "HH = Household","Concentrated Disadvantaged Index combines the normalized percentage of unemployments, the percentage of female-headed family, the percentage of poverty, and the percentage of less than high school education(alpha = .865).", "Mobility Index combines the normalized percentage of moved in(moved within same county, moved from different county within same state, moved from different state, and moved from abroad) and the percentage of renters(alpha = .645).","Heterogeneity Index is the probability of randomly choosen two individuals in the DMA, and they would be different races."), footnote_as_chunk = T, threeparttable = T)
+print(final_desc_table)
+
+```
+\elandscape
+\newpage
+
+
+
+```{r}
+###Correlation Matrix Function
+corstars <-function(x, method=c("pearson", "spearman"), removeTriangle=c("upper", "lower"),
+                     result=c("none", "html", "latex")){
+    #Compute correlation matrix
+    require(Hmisc)
+    x <- as.matrix(x)
+    correlation_matrix<-rcorr(x, type=method[1])
+    R <- correlation_matrix$r # Matrix of correlation coeficients
+    p <- correlation_matrix$P # Matrix of p-value 
+    
+    ## Define notions for significance levels; spacing is important.
+    mystars <- ifelse(p < .01, "**", ifelse(p < .05, "*\ ", "\ \ "))
+    
+    ## trunctuate the correlation matrix to two decimal
+    R <- format(round(cbind(rep(-1.11, ncol(x)), R), 2))[,-1]
+    
+    ## build a new matrix that includes the correlations with their apropriate stars
+    Rnew <- matrix(paste(R, mystars, sep=""), ncol=ncol(x))
+    diag(Rnew) <- paste(diag(R), " ", sep="")
+    rownames(Rnew) <- colnames(x)
+    colnames(Rnew) <- paste(colnames(x), "", sep="")
+    
+    ## remove upper triangle of correlation matrix
+    if(removeTriangle[1]=="upper"){
+      Rnew <- as.matrix(Rnew)
+      Rnew[upper.tri(Rnew, diag = TRUE)] <- ""
+      Rnew <- as.data.frame(Rnew)
+    }
+    
+    ## remove lower triangle of correlation matrix
+    else if(removeTriangle[1]=="lower"){
+      Rnew <- as.matrix(Rnew)
+      Rnew[lower.tri(Rnew, diag = TRUE)] <- ""
+      Rnew <- as.data.frame(Rnew)
+    }
+    
+    ## remove last column and return the correlation matrix
+    Rnew <- cbind(Rnew[1:length(Rnew)-1])
+    if (result[1]=="none") return(Rnew)
+    else{
+      if(result[1]=="html") print(xtable(Rnew), type="html")
+      else print(xtable(Rnew), type="latex") 
+    }
+} 
+```
+
+
+
+
+```{r, results = "asis"}
+#Correlation Matrix
+
+cor_table <- corstars(operated_data_and_variables)
+
+#insert index at the end of rowname
+cor_table["new"] <- c("(1)", "(2)", "(3)", "(4)",
+                        "(5)", "(6)", "(7)", "(8)",
+                        "(9)", "(10)", "(11)", "(12)",
+                        "(13)", "(14)", "(15)", "(16)",
+                        "(17)", "(18)") 
+cor_table <- cor_table[,c(18, 1:17)]
+
+
+#insert index as colnames
+colnames(cor_table) <- c(" ", "(1)", "(2)", "(3)", "(4)",
+                        "(5)", "(6)", "(7)", "(8)",
+                        "(9)", "(10)", "(11)", "(12)",
+                        "(13)", "(14)", "(15)", "(16)",
+                        "(17)")
+
+
+
+rownames(cor_table) <- c("GT MVT", 
+                         "GT Burglary", 
+                         "GT Larceny", 
+                         "GT Rape",
+                         "UCR MVT", 
+                         "UCR Burglary", 
+                         "UCR Larceny", 
+                         "UCR Rape",
+                         "CD Index", 
+                          #"% Unemployed",
+                          #"% Female Headed Family",
+                          #"% Poverty",
+                          #"% Move In", 
+                          #"% Renter",
+                          "Mobility Index",
+                          "Heterogeneity Index",
+                          "% Foreign Born", 
+                          #"% Black", 
+                          #"% Hispanic", 
+                          #"% White", 
+                          "% Divorced", 
+                          #"% Less than High School", 
+                          "% Young Males",
+                          "Drug Mortality Rate",
+                          #"Law Enforce per Thousand",
+                          "Population(log)",
+                          "% Internet Usage HH",
+                          "Median Vehicle HH")
+```
+
+\newpage
+\blandscape
+```{r, results = "asis", message=FALSE, warning = FALSE, echo = FALSE}
+col_width <- "0.84cm"
+final_corr_table <- kable(cor_table, longtable = T, booktabs = T, 
+                          align = "l",
+                          format = "latex",
+    caption = 'Correlation Matrix of All Measures') %>%
+  kable_styling(latex_options="scale_down", font_size = 6.5,
+                position = "float_left", bootstrap_options = "striped",
+                full_width = F) %>%
+  column_spec(1, bold = F, width = "2.5cm") %>%
+  column_spec(2, bold = F, width = "0.2cm") %>%
+  column_spec(3, bold = F, width = col_width) %>%
+  column_spec(4, bold = F, width = col_width) %>%
+  column_spec(5, bold = F, width = col_width) %>%
+  column_spec(6, bold = F, width = col_width) %>%
+  column_spec(7, bold = F, width = col_width) %>%
+  column_spec(8, bold = F, width = col_width) %>%
+  column_spec(9, bold = F, width = col_width) %>%
+  column_spec(10, bold = F, width = col_width) %>%
+  column_spec(11, bold = F, width = col_width) %>%
+  column_spec(12, bold = F, width = col_width) %>%
+  column_spec(13, bold = F, width = col_width) %>%
+  column_spec(14, bold = F, width = col_width) %>%
+  column_spec(15, bold = F, width = col_width) %>%
+  column_spec(16, bold = F, width = col_width) %>%
+  column_spec(17, bold = F, width = col_width) %>%
+  column_spec(18, bold = F, width = col_width) %>%
+  column_spec(19, bold = F, width = col_width) %>%
+  footnote(number = c("** = p < .01, * = p < .05;","GT = Google Tredns Crime Estimates", "MVT = Motor Vehicle Theft", "CD = Concentrated Disadvantages", "HH = Household"), number_title = "Note: ", 
+           footnote_as_chunk = T, threeparttable = T)
+print(final_corr_table, scalebox = 0.9)
+
+```
+\elandscape
+\newpage
+
+
+```{r}
+#write a OLS regression function (for one period 2010-2019)
+lm_func <- function(data, y, control_Vehicle){
+  data <- drop_na(data)
+  if (control_Vehicle == FALSE){
+    lm_model <- lm(data = data, 
+                   data[[y]] ~ Concentrated.Disadvantage.Index +
+                       #Percentage.of.Unemployed +
+                       #Percentage.of.Female.Headed.Family +
+                       #Percentage.of.Poverty +
+                       #Percentage.of.MoveIn + 
+                       #Percentage.of.Renter +
+                       Mobility.Index +
+                       Heterogeneity.Index +
+                       Percentage.of.Foreign.Born + 
+                       #Percentage.of.Black +
+                       #Percentage.of.Hispanic + 
+                       #Percentage.of.White +
+                       Percentage.of.Divorced +
+                       #Less.than.High.School +
+                       Percentage.of.Young.Males +
+                       Drug.Mortality.Rate +
+                       #Law.Enforce.per.Thousand +
+                       Population.logged +
+                       Internet.Usage.HH)
+  }
+  else{
+    lm_model <- lm(data = data, 
+                   data[[y]] ~ Concentrated.Disadvantage.Index +
+                     #Percentage.of.Unemployed +
+                       #Percentage.of.Female.Headed.Family +
+                       #Percentage.of.Poverty +
+                       #Percentage.of.MoveIn + 
+                       #Percentage.of.Renter +
+                       Mobility.Index +
+                       Heterogeneity.Index +
+                       Percentage.of.Foreign.Born +
+                       #Percentage.of.Black +
+                       #Percentage.of.Hispanic + 
+                       #Percentage.of.White +
+                       Percentage.of.Divorced +
+                       #Less.than.High.School +
+                       Percentage.of.Young.Males +
+                       Drug.Mortality.Rate +
+                       #Law.Enforce.per.Thousand +
+                       Population.logged +
+                       Internet.Usage.HH +
+                       Median.Vehicle.HH)
+  }
+  return(lm_model)
+}
+```
+
+
+
+```{r, results = "asis"}
+#GT_MVT 2010-2019 OLS model
+GT_MVT_lm <- lm_func(final.data.2010_2019,
+                     "GT.MVT",
+                     control_Vehicle = TRUE)
+
+#UCR_MVT 2010-2019 OLS model
+UCR_MVT_lm <- lm_func(final.data.2010_2019,
+                        "UCR.MVT",
+                        control_Vehicle = TRUE)
+
+#GT_Burglary 2010-2019 OLS model
+GT_Burglary_lm <- lm_func(final.data.2010_2019,
+                     "GT.Burglary",
+                     control_Vehicle = FALSE)
+
+#UCR_Burglary 2010-2019 OLS model
+UCR_Burglary_lm <- lm_func(final.data.2010_2019,
+                        "UCR.Burglary",
+                        control_Vehicle = FALSE)
+
+#GT_Larceny 2010-2019 OLS model
+GT_Larceny_lm <- lm_func(final.data.2010_2019,
+                     "GT.Larceny",
+                     control_Vehicle = FALSE)
+
+#UCR_Larceny 2010-2019 OLS model"\\% 
+UCR_Larceny_lm <- lm_func(final.data.2010_2019,
+                        "UCR.Larceny",
+                        control_Vehicle = FALSE)
+
+#GT_Rape 2010-2019 OLS model
+GT_Rape_lm <- lm_func(final.data.2010_2019,
+                     "GT.Rape",
+                     control_Vehicle = FALSE)
+
+#UCR_Burglary 2010-2019 OLS model
+UCR_Rape_lm <- lm_func(final.data.2010_2019,
+                        "UCR.Rape",
+                        control_Vehicle = FALSE)
+
+```
+
+```{r}
+# Test RMSE of each model
+library(Metrics)
+
+ucr_mvt_rmse <- rmse(UCR_MVT_lm$fitted.values, final.data.2010_2019$UCR.MVT) #11.38
+gt_mvt_rmse <- rmse(GT_MVT_lm$fitted.values, final.data.2010_2019$GT.MVT) #9.27
+ucr_burglary_rmse <- rmse(UCR_Burglary_lm$fitted.values, final.data.2010_2019$UCR.Burglary) #9.78
+gt_burglary_rmse <- rmse(GT_Burglary_lm$fitted.values, final.data.2010_2019$GT.Burglary) #11.82
+ucr_larceny_rmse <- rmse(UCR_Larceny_lm$fitted.values, final.data.2010_2019$UCR.Larceny) #10.80
+gt_larceny_rmse <- rmse(GT_Larceny_lm$fitted.values, final.data.2010_2019$GT.Larceny) #6.2
+ucr_rape_rmse <- rmse(UCR_Rape_lm$fitted.values, final.data.2010_2019$UCR.Rape) #12.72
+gt_rape_rmse <- rmse(GT_Rape_lm$fitted.values, final.data.2010_2019$GT.Rape) #7.32
+total_rmse <- c(gt_mvt_rmse, ucr_mvt_rmse, gt_burglary_rmse, ucr_burglary_rmse,
+                gt_larceny_rmse, ucr_larceny_rmse, gt_rape_rmse, ucr_rape_rmse)
+
+```
+
+
+\newpage
+\blandscape
+```{r, results = "asis"}
+
+list_of_variable_showing_names <- c(#"GT MVT", "GT Burglary", "GT Larceny", "GT Rape",
+                        #"UCR MVT", "UCR Burglary", "UCR Larceny", "UCR Rape",
+                        "Concentrated Disadvantages Index", 
+                               #"\\% Unemployed",
+                               #"\\% Female Headed Family",
+                               #"\\% Poverty",
+                               #"\\% Move In", 
+                               #"\\% Renter",
+                               "Mobility Index",
+                               "Heterogeneity Index",
+                               "\\% Foreign Born", 
+                               #"\\% Black", 
+                               #"\\% Hispanic", 
+                               #"\\% White", 
+                               "\\% Divorced", 
+                               #"\\% Less than High School", 
+                               "\\% Young Males",
+                               "Drug Mortality Rate",
+                               #"Law Enforce per Thousand",
+                               "Population(log)",
+                               "\\% Internet Usage HH", 
+                               "Median Vehicle HH")
+
+stargazer(GT_MVT_lm, UCR_MVT_lm, 
+          GT_Burglary_lm, UCR_Burglary_lm,
+          GT_Larceny_lm, UCR_Larceny_lm, 
+          GT_Rape_lm, UCR_Rape_lm, 
+          title = "OLS Model of Google Trends and UCR Crime Estimation on Crime Factors, 2010-2019",
+          omit.stat = c("rsq", "ll", "ser"),
+          no.space = TRUE,
+          table.placement = "h!",
+          notes = c("GT = Google Trends Crime Estimates; MVT = Motor Vehicle Theft; HH = Household"),
+          notes.align = "l",
+          dep.var.labels.include = F,
+          column.labels = c("GT MVT", "UCR MVT", "GT Burglary", "UCR Burglary",
+                            "GT Larceny", "UCR Larceny", "GT Rape", "UCR Rape"),
+          covariate.labels = list_of_variable_showing_names,
+          column.sep.width = "1.5pt",
+          font.size = "small",
+          add.lines = list(c("RMSE", round(total_rmse, 3))),
+          df = F)
+
+```
+\elandscape
+\newpage
+
+
+
+
+```{r}
+
+#write a plot function
+plot_texts <- function(df, title){
+  df <- drop_na(df)
+  mvt_lm <- lm(data = df, UCR.MVT ~ GT.MVT)
+  burglary_lm <- lm(data = df, UCR.Burglary ~ GT.Burglary)
+  larceny_lm <- lm(data = df, UCR.Larceny ~ GT.Larceny)
+  rape_lm <- lm(data = df, UCR.Rape ~ GT.Rape)
+  #_________________________________________________
+  #plot cook's distance in MVT 
+  MVT_text_plot1 <- ggplot(df, aes(x = GT.MVT, 
+                                   y = UCR.MVT, 
+                                   label = DMA, 
+                                   size = cooks.distance(mvt_lm),
+                                   col = (cooks.distance(mvt_lm) > 4/(
+                                     length(final.data.2010_2019$DMA) - 1 - 1))&(
+                                     GT.MVT > median(df$GT.MVT)) & (
+                                       UCR.MVT < median(df$UCR.MVT)
+                                       ))) +
+  geom_text(vjust = 2) +
+  geom_point() +
+  geom_abline(intercept = coef(lm(data = df, UCR.MVT~GT.MVT))[1], 
+              slope = coef(lm(data = df, UCR.MVT~GT.MVT))[2],color = "gray28")+
+  geom_hline(aes(yintercept=median(df$UCR.MVT), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  geom_vline(aes(xintercept=median(df$GT.MVT), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  scale_linetype_manual("Median", values = c(2,2)) +
+  ylab("UCR MVT Rate (0 to 100 scale)") +
+    xlab("GT MVT Estimates") +
+    scale_color_manual("High\nInfluence\n&\nUnderreported\nZone",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "lightblue")) +
+    guides(color = FALSE) +
+    scale_size("Cook’s\nDistance") +
+    xlim(0, 120) +
+    ylim(-10, 110)
+  #_________________________________________________
+  #plot cook's distance in Burglary
+  burglary_text_plot <- ggplot(df, aes(x = GT.Burglary, 
+                                   y = UCR.Burglary, 
+                                   label = DMA, 
+                                   size = cooks.distance(burglary_lm),
+                                   col = (cooks.distance(burglary_lm) > 4/(
+                                     length(final.data.2010_2019$DMA) - 1 - 1))&(
+                                     GT.Burglary > median(df$GT.Burglary)) & (
+                                       UCR.Burglary < median(df$UCR.Burglary)
+                                       ))) +
+  geom_text(vjust = 2) +
+  geom_point()  +
+  geom_abline(intercept = coef(lm(data = df, UCR.Burglary~GT.Burglary))[1], 
+              slope = coef(lm(data = df, UCR.Burglary~GT.Burglary))[2],color = "gray28")+
+  geom_hline(aes(yintercept=median(df$UCR.Burglary), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  geom_vline(aes(xintercept=median(df$GT.Burglary), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  scale_linetype_manual("Median", values = c(2,2)) +
+  ylab("UCR Burglary Rate (0 to 100 scale)") +
+    xlab("GT Burglary Estimates") +
+    scale_color_manual("High\nInfluence\n&\nUnderreported\nZone",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "lightblue")) +
+    guides(color = FALSE) +
+    scale_size("Cook’s\nDistance") +
+    xlim(0, 120) +
+    ylim(-10, 110)
+  
+  #_________________________________________________
+  #plot cook's distance in Larceny
+  larceny_text_plot <- ggplot(df, aes(x = GT.Larceny, 
+                                   y = UCR.Larceny, 
+                                   label = DMA, 
+                                   size = cooks.distance(larceny_lm),
+                                   col = (cooks.distance(larceny_lm) > 4/(
+                                     length(final.data.2010_2019$DMA) - 1 - 1))&(
+                                     GT.Larceny > median(df$GT.Larceny)) & (
+                                       UCR.Larceny < median(df$UCR.Larceny)
+                                       ))) +
+  geom_text(vjust = 2) +
+  geom_point() +
+  geom_abline(intercept = coef(lm(data = df, UCR.Larceny~GT.Larceny))[1], 
+              slope = coef(lm(data = df, UCR.Larceny~GT.Larceny))[2],color = "gray28")+
+  geom_hline(aes(yintercept=median(df$UCR.Larceny), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  geom_vline(aes(xintercept=median(df$GT.Larceny), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  scale_linetype_manual("Median", values = c(2,2)) +
+  ylab("UCR Larceny Rate (0 to 100 scale)") +
+  xlab("GT Larceny Estimates") +
+    scale_color_manual("High\nInfluence\n&\nUnderreported\nZone",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "lightblue")) +
+    guides(color = FALSE) +
+    scale_size("Cook’s\nDistance") +
+    xlim(0, 120) +
+    ylim(-10, 110)
+  
+  #_________________________________________________
+  #plot cook's distance in Rape
+  rape_text_plot <- ggplot(df, aes(x = GT.Rape, 
+                                   y = UCR.Rape, 
+                                   label = DMA, 
+                                   size = cooks.distance(rape_lm),
+                                   col = (cooks.distance(rape_lm) > 4/(
+                                     length(final.data.2010_2019$DMA) - 1 - 1))&(
+                                     GT.Rape > median(df$GT.Rape)) & (
+                                       UCR.Rape < median(df$UCR.Rape)
+                                       ))) +
+  geom_text(vjust = 2) +
+  geom_point() +
+  geom_abline(intercept = coef(lm(data = df, UCR.Rape~GT.Rape))[1], 
+              slope = coef(lm(data = df, UCR.Rape~GT.Rape))[2],color = "gray28")+
+  geom_hline(aes(yintercept=median(df$UCR.Rape), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  geom_vline(aes(xintercept=median(df$GT.Rape), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  scale_linetype_manual("Median", values = c(2,2)) +
+  scale_size("Cook’s\nDistance") +
+  ylab("UCR Rape Rate (0 to 100 scale)") +
+    xlab("GT Rape Estimates") +
+    scale_color_manual("High\nInfluence\n&\nUnderreported\nZone",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "lightblue")) +
+    guides(color = FALSE) +
+    xlim(0, 120) +
+    ylim(-10, 110)
+  #_______________________________________________
+  #just to get the legend
+  just_to_get_the_legend1 <- ggplot(df, aes(x = GT.Rape, 
+                                   y = UCR.Rape, 
+                                   label = DMA, 
+                                   size = cooks.distance(rape_lm),
+                                   col = (cooks.distance(rape_lm) > 4/(
+                                     length(final.data.2010_2019$DMA) - 1 - 1))&(
+                                     GT.Rape > median(df$GT.Rape)) & (
+                                       UCR.Rape < median(df$UCR.Rape)
+                                       ))) +
+  geom_text(vjust = 2) +
+  geom_point() +
+  geom_hline(aes(yintercept=median(df$UCR.Rape), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  geom_vline(aes(xintercept=median(df$GT.Rape), linetype= " "), col = "firebrick3", show.legend = FALSE) +
+  scale_linetype_manual("Median", values = c(2,2)) +
+  labs(title = "Rape") + 
+  scale_size("Cook’s\nDistance") +
+    scale_color_manual("High Influence & In the Underreported Zone",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "lightblue")) +
+    guides(size = FALSE) +
+    xlim(0, 120) +
+    ylim(-10, 110) +theme(legend.position = "top")
+  
+  #legends of Median lines
+  just_to_get_the_legend2 <- ggplot(df, aes(x = GT.Rape, 
+                                   y = UCR.Rape, 
+                                   label = DMA
+                                       )) +
+  geom_hline(aes(yintercept=median(df$UCR.Rape), linetype= " "), col = "firebrick3") +
+  scale_linetype_manual("Median", values = c(2,2)) + theme(legend.position = "top")
+  
+  #legends of Regression line
+  just_to_get_the_legend3 <- ggplot(data = df, aes(x = GT.Rape, y = UCR.Rape)) +
+  geom_point()+
+  geom_abline(aes(intercept = coef(lm(data = df, UCR.Rape~GT.Rape))[1], 
+              slope = coef(lm(data = df, UCR.Rape~GT.Rape))[2], color = ""),
+              show_guide = TRUE) +
+  scale_color_manual(name = "Regression Line", values=c("gray28")) + theme(legend.position = "top")
+  #______________________________________________
+  #blank plot
+  blankPlot <- ggplot()+geom_blank(aes(1,1)) + cowplot::theme_nothing()
+  
+  #_______________________________________________
+  #put all the cook's distance plots together
+  legend_1 <- get_legend(just_to_get_the_legend1)
+  legend_2 <- get_legend(just_to_get_the_legend2)
+  legend_3 <- get_legend(just_to_get_the_legend3)
+  final_plot <- grid.arrange( MVT_text_plot1, burglary_text_plot, larceny_text_plot, rape_text_plot, 
+                               blankPlot, legend_1, legend_3, legend_2, blankPlot, ncol=6,  nrow = 3, 
+                              widths = c(0.3,0.5,1,1,0.5,0.3), 
+                              heights = c(2 , 2 , 0.5),
+                              layout_matrix = rbind(c(1,1,1,2,2,2), c(3,3,3,4,4,4),c(5,6,6,7,8,9)),
+                             top = textGrob(
+                               title,hjust = 0.5, vjust = 0.5, 
+                               gp=gpar(fontsize = 15,font=2))) 
+  return(final_plot)
+}
+
+
+
+
+#"lm" dma text scatter plot
+png(file="correlation_dma_text_10_19_plot_lm.png", width = 30, height = 17, unit = "cm",
+    res = 200)
+plot_texts(final.data.2010_2019, "Figure 5: Scatter Plot of Google Trends and UCR Crimes with DMAs, 2010 to 2019")
+dev.off()
+
+
+
+
+  
+```
+
+
+
+```{r}
+#Test the residual of GT and UCR, and test what causes the residuals
+#write a function to process residual test
+test_ucr_gt_residuals <- function(data, GT, UCR, year){
+  data2 <- drop_na(data)
+  data2_lm <- lm(data = data2, data2[[GT]] ~ data2[[UCR]])
+  data2$residuals <- data2_lm$residuals 
+  data2_resdiual <- lm(data = data2, residuals ~ Concentrated.Disadvantage.Index +
+                       #Percentage.of.Unemployed +
+                       #Percentage.of.Female.Headed.Family +
+                       #Percentage.of.Poverty +
+                       #Percentage.of.MoveIn + 
+                       #Percentage.of.Renter +
+                       Mobility.Index +
+                       Heterogeneity.Index +
+                       Percentage.of.Foreign.Born + 
+                       #Percentage.of.Black +
+                       #Percentage.of.Hispanic + 
+                       #Percentage.of.White +
+                       Percentage.of.Divorced +
+                       #Less.than.High.School +
+                       Percentage.of.Young.Males +
+                       Drug.Mortality.Rate +
+                       #Law.Enforce.per.Thousand +
+                       Population.logged +
+                       Internet.Usage.HH +
+                       Median.Vehicle.HH)
+  return(summary(data2_resdiual))
+}
+test_ucr_gt_residuals(final.data.2010_2019, "GT.MVT", "UCR.MVT", "2010_2019")
+
+test_ucr_gt_residuals(final.data.2010_2019, "GT.Rape", "UCR.Rape", "2010_2019")
+
+test_ucr_gt_residuals(final.data.2010_2019, "GT.Burglary", "UCR.Burglary", "2010_2019")
+
+test_ucr_gt_residuals(final.data.2010_2019, "GT.Larceny", "UCR.Larceny", "2010_2019")
+
+
+```
+
+
+
+
+
+```{r}
+plot_correlation <- function(df, title){
+  mvtp <- round(cor.test(df$GT.MVT,df$UCR.MVT)$p.value,3)
+  burglaryp <- round(cor.test(df$GT.Burglary,df$UCR.Burglary)$p.value,3)
+  larcenyp <- round(cor.test(df$GT.Larceny,df$UCR.Larceny)$p.value,3)
+  rapep <- round(cor.test(df$GT.Rape,df$UCR.Rape)$p.value,3)
+  mvtp <- ifelse(mvtp == 0, 0.001, mvtp)
+  burglaryp <- ifelse(burglaryp == 0, 0.001,burglaryp )
+  larcenyp <- ifelse(larcenyp == 0, 0.001,larcenyp )
+  rapep <- ifelse(rapep == 0, 0.001,rapep )
+  df <- drop_na(df)
+  gt_ucr <- ggplot(df) +
+  geom_point(aes(x = GT.MVT, y = UCR.MVT), alpha = 0.3, size = 1, color = "brown") +
+  geom_smooth(aes(x = GT.MVT, y = UCR.MVT), method = "lm") +
+  geom_text(x=40, y=70, label = paste(
+    "r = ", sprintf("%.3f", cor(df$GT.MVT,df$UCR.MVT,use = "complete.obs")),
+    ", p-value < ", mvtp)) + 
+  labs(title = "Motor Vehicle Theft") +
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+  xlim(0, 100)
+
+  gt_ucr_burg <- ggplot(df)+
+    geom_point(aes(x = GT.Burglary, y = UCR.Burglary), alpha = 0.3, size = 1) +
+    geom_smooth(aes(x = GT.Burglary, y = UCR.Burglary), method = "lm")+
+    geom_text(x=40, y=76, label = paste("r = ",sprintf("%.3f",cor(df$GT.Burglary,df$UCR.Burglary,use = "complete.obs")),
+    ", p-value < ", burglaryp))+ 
+    labs(title = "Burglary") +
+    theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+    xlim(20, 100)
+  
+  gt_ucr_lar <- ggplot(df)+
+    geom_point(aes(x = GT.Larceny, y = UCR.Larceny), alpha = 0.3, size = 1, color = "red")+
+    geom_smooth(aes(x = GT.Larceny, y = UCR.Larceny), method = "lm")+
+    geom_text(x=50, y=82, label = paste("r = ",sprintf("%.3f", cor(df$GT.Larceny,df$UCR.Larceny,use = "complete.obs")),
+    ", p-value < ", larcenyp))+ 
+    labs(title = "Larceny") +
+    theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+    xlim(20, 100)
+  
+  gt_ucr_rape <- ggplot(df)+
+    geom_point(aes(x = GT.Rape, y = UCR.Rape), alpha = 0.3, size = 1, color = "darkgreen")+
+    geom_smooth(aes(x = GT.Rape, y = UCR.Rape), method = "lm") +
+    geom_text(x=55, y=80, label = paste("r = ",sprintf("%.3f", cor(df$GT.Rape, df$UCR.Rape, use = "complete.obs")),
+    ", p-value < ", rapep))+ 
+    labs(title = "Rape") +
+    theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+    xlim(20, 100)
+  
+  grid.arrange(gt_ucr, gt_ucr_burg, gt_ucr_lar, gt_ucr_rape, 
+                 ncol=2, top = textGrob(
+                 title, hjust = 0.5, vjust = 0.5,
+                 gp=gpar(fontsize=16,font=2)),
+               left = textGrob("UCR Crime Rates", rot = 90, vjust = 1, 
+                               gp=gpar(fontsize = 15,fontface="bold")),
+               bottom = textGrob("Google Trends Crime Estimates", 
+                                 gp=gpar(fontsize = 15,fontface="bold")))
+}
+
+
+png(file="correlation_10_19_plot.png", width = 30, height = 17, unit = "cm",
+    res = 100)
+plot_correlation(final.data.2010_2019, 
+                 "Figure 1, UCR, and Google Trends Correlation Scatter Plots")
+dev.off()
+
+```
+
+
+```{r}
+
+library(MASS)
+
+#Cook's Distance Plot Function
+cook_distance <- function(lm_model, text_name_column, crimetype){
+  cooks_data <- data.frame(cooks.distance(lm_model), hatvalues(lm_model), studres(lm_model), text_name_column)
+  colnames(cooks_data) <- cbind("cooks_dist", "hat_values", "studres", "DMA")
+  
+  ## Plot
+  
+  ggplot(cooks_data, aes(x = hat_values, y = studres,
+          size = cooks_dist,
+          col = cooks_dist > 4/(nrow(cooks_data) - 1 - 1),
+          label = cooks_data$DMA)) +
+    geom_point() + 
+    geom_text(vjust = 2)  +
+    geom_vline(xintercept = 2 * (lm_model$rank - 1 + 1)/nrow(cooks_data),
+               linetype = 2) +
+    geom_hline(yintercept = c(-4, 4), linetype = 2) +
+    scale_color_manual("High\nInfluence",
+                       values = c("TRUE" = "gold2",
+                                  "FALSE" = "gray97")) +
+    scale_size("Cook’s\nDistance") + theme_bw() +
+    ggtitle(paste(crimetype)) +
+    theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+    xlim(-0.28, 0.45) +
+    ylim(-4.8, 4.8)
+}
+
+#Arrange Cook's Distance Plot Function
+test_lm <- lm(data = final.data.2010_2019, UCR.MVT ~ GT.MVT)
+test_lm$rank
+
+
+
+arrange_cook <- function(df, title){
+  df <- drop_na(df)
+  ucr_gt_mvt_lm <- lm(data = df, UCR.MVT ~ GT.MVT)
+  ucr_gt_mvt_cook_plot <- cook_distance(ucr_gt_mvt_lm, df$DMA, "Motor Vehicle Theft")+
+    theme(legend.position="none")
+
+  ucr_gt_larceny_lm <- lm(data = df, UCR.Larceny ~ GT.Larceny)
+  ucr_gt_larceny_cook_plot <- cook_distance(ucr_gt_larceny_lm, df$DMA, "Larceny")+
+    theme(legend.position="none")
+  
+  ucr_gt_burglary_lm <- lm(data = df, UCR.Burglary ~ GT.Burglary)
+  ucr_gt_burglary_cook_plot <- cook_distance(ucr_gt_burglary_lm, df$DMA, "Burglary")+
+    theme(legend.position="none")
+  
+  ucr_gt_rape_lm <- lm(data = df, UCR.Rape ~ GT.Rape)
+  ucr_gt_rape_cook_plot <- cook_distance(ucr_gt_rape_lm, df$DMA, "Rape")+
+    theme(legend.position="none")
+  
+  legend <- get_legend(cook_distance(ucr_gt_rape_lm, df$DMA, "Rape"))
+  
+  final_plot <- grid.arrange(arrangeGrob(ucr_gt_mvt_cook_plot, 
+                             ucr_gt_burglary_cook_plot, 
+                             ucr_gt_larceny_cook_plot, 
+                             ucr_gt_rape_cook_plot, nrow = 2), 
+                             legend,
+                             widths=c(8, 1),
+                             heights=c(200, 1),
+                             ncol=2, top = textGrob(title, hjust = 0.5 , vjust = 0.5,
+                                                    gp=gpar(fontsize=16,font=2)),
+                             left = textGrob("Studentized Residuals", rot = 90, vjust = 1, 
+                               gp=gpar(fontsize = 15,fontface="bold")),
+                             bottom = textGrob("Hat Values", hjust = 0.9, 
+                               gp=gpar(fontsize = 15,fontface="bold")))
+  return(final_plot)
+}
+
+png(file="cook_10_19_plot.png", width = 30, height = 17, unit = "cm",
+    res = 100)
+arrange_cook(final.data.2010_2019, 
+             "Figure 6: Influence Plot of Google Trends and UCR Crimes, 2010 to 2019")
+dev.off()
+
+```
+
+
+
+```{r, results = "asis"}
+#VIF Test, VIF need to be less than 4
+library(caret)
+
+stargazer(cbind(car::vif(GT_MVT_lm), car::vif(UCR_MVT_lm)),cbind(
+                car::vif(GT_Burglary_lm),
+                car::vif(UCR_Burglary_lm),
+                car::vif(GT_Larceny_lm),
+                car::vif(UCR_Larceny_lm),
+                car::vif(GT_Rape_lm),
+                car::vif(UCR_Rape_lm)))
+
+
+```
+
+
+
+```{r}
+library(psych)
+library("GPArotation")
+efa_gt_2010_2015 <- fa(final.data.2010_2019[c(12:15,19,23,29:31)], nfactors = 3,rotate = "oblimin",fm="minres")
+print(efa_gt_2010_2015$loadings,cutoff = 0.3)
+print("Eigen values of the common factor solution: ")
+print(efa_gt_2010_2015$values,cutoff = 0.3)
+
+efa_gt_2010_2015 <- fa(final.data.2010_2019[c(12:15,19,23,29:31)], nfactors = 6,rotate = "oblimin",fm="minres")
+print(efa_gt_2010_2015$loadings,cutoff = 0.3)
+print("Eigen values of the common factor solution: ")
+print(efa_gt_2010_2015$values,cutoff = 0.3)
+
+efa_gt_2010_2015 <- fa(final.data.2010_2019[c(12:15,19,23,29:31)], nfactors = 9,rotate = "oblimin",fm="minres")
+print(efa_gt_2010_2015$loadings,cutoff = 0.3)
+print("Eigen values of the common factor solution: ")
+print(efa_gt_2010_2015$values,cutoff = 0.3)
+
+```
+
+
+
+```{r, results = "asis"}
+
+res <- cor(final.data.2010_2019[3:10,12:31])
+
+write.csv(round(res, 3),file="GT_ACS_cormatrix.csv")
+
+```
+
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+h1 <- ggplot(final.data.2010_2019, aes(x=GT.MVT)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Motor Vehicle Theft") +
+  xlim(0,100)
+
+h2 <- ggplot(final.data.2010_2019, aes(x=GT.Burglary))+ 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Burglary") +
+  xlim(0,100)
+
+h3 <- ggplot(final.data.2010_2019, aes(x=GT.Larceny)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Larceny") +
+  xlim(0,100)
+
+h4 <- ggplot(final.data.2010_2019, aes(x=GT.Rape)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Rape") +
+  xlim(0,100)
+
+gt_hist_title <- "Figure 2, Histogram of Google Trends Crime Estimates"
+
+png(file="hist_GT_2010_2019.png", width = 30, height = 17, unit = "cm",
+    res = 200)
+grid.arrange(h1, h2, h3, h4, 
+          ncol = 2, nrow = 2, 
+          top = textGrob(gt_hist_title, hjust = 0.5 , vjust = 0.5, 
+                         gp=gpar(fontsize=15,font=2)),
+          left = textGrob("Counts", rot = 90, vjust = 1, gp=gpar(fontsize = 15,fontface="bold")),
+          bottom = textGrob("Google Trends Crime Estimates Distributions", 
+                            gp=gpar(fontsize = 15,fontface="bold")))
+
+dev.off()
+
+
+```
+
+
+```{r}
+h5 <- ggplot(final.data.2010_2019, aes(x=UCR.MVT)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Motor Vehicle Theft") +
+  xlim(0,100)
+
+h6 <- ggplot(final.data.2010_2019, aes(x=UCR.Burglary)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Burglary") +
+  xlim(0,100)
+
+h7 <- ggplot(final.data.2010_2019, aes(x=UCR.Larceny)) + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Larceny") +
+  xlim(0,100)
+
+h8 <- ggplot(final.data.2010_2019, aes(x=UCR.Rape))  + 
+  geom_histogram() + 
+  theme(axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs(title = "Rape") +
+  xlim(0,100)
+
+ucr_hist_title <- "Figure 3, Histogram of Uniform Crime Report Crime Rates"
+
+png(file="hist_UCR_2010_2019.png", width = 30, height = 17, unit = "cm",
+    res = 200)
+grid.arrange(h5, h6, h7, h8, ncol = 2, 
+          top = textGrob(ucr_hist_title, hjust = 0.5, vjust = 0.5, 
+                         gp=gpar(fontsize = 15,font=2)),
+          left = textGrob("Counts", rot = 90, vjust = 1, gp=gpar(fontsize = 15,fontface="bold")),
+          bottom = textGrob("Uniform Crime Raport Crime Rates Distributions", 
+                            gp=gpar(fontsize = 15,fontface="bold")))
+dev.off()
+
+
+```
+
+
+
+```{r}
+write.csv(final.data.2010_2019,file="final_data_2010_2019.csv")
+```
+
